@@ -1,0 +1,41 @@
+# This file is intentionally left blank for diagnostic purposes.
+
+# Manifest for the "ComfyUI-BlenderBridge" addon.
+# This file is for packaging and distribution, and complements the `bl_info` in `__init__.py`.
+# For more information on Blender add-on manifests, see:
+# https://wiki.blender.org/wiki/Reference/Release_Notes/4.2/Python_API#Add-on_Manifests
+
+# This is the final, complete manifest based on official documentation and project requirements.
+schema_version = "1.0.0"
+
+id = "blender_comfyui_bridge"
+version = "2.0.0"
+name = "Blender-ComfyUI-Bridge"
+tagline = "Blender and ComfyUI integration through ZMQ and HTTP"
+maintainer = "Your Name"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+
+# License conforming to https://spdx.org/licenses/ (use "SPDX:" prefix)
+license = ["SPDX:GPL-3.0-or-later"]
+
+# Optional fields
+description = """
+A robust bridge for two-way communication between Blender and ComfyUI,
+enabling seamless render-to-texture workflows.
+"""
+tags = ["Render", "Pipeline", "Node"]
+
+tracker_url = ""
+documentation_url = ""
+
+# All Python dependencies are located in the 'wheels' directory.
+# Blender will automatically install the correct wheels for the user's platform.
+[python]
+wheels_path = "wheels"
+
+# Declare the permissions the add-on needs.
+[permissions]
+network = "Required to connect to the ComfyUI server"
+files = "Required to read rendered images and receive results"
