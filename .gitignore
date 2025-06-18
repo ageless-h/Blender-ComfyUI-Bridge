@@ -130,4 +130,9 @@ cython_debug/
 .vscode/
 .idea/
 *.swp
-*.swo 
+*.swo
+
+# Archives
+# --------
+*.zip
+*.tar.gz 
