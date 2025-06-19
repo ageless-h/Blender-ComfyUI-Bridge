@@ -1,78 +1,103 @@
 import bpy
 
+# 一个辅助函数，用于获取当前活动的图像编辑器中的图像
+def get_active_image_from_editor(context):
+    for area in context.screen.areas:
+        if area.type == 'IMAGE_EDITOR':
+            if area.spaces.active:
+                return area.spaces.active.image
+    return None
+
 class BRIDGE_PT_MainPanel(bpy.types.Panel):
     bl_label = "ComfyUI Bridge"
     bl_idname = "BRIDGE_PT_MainPanel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'ComfyBridge'
+    bl_category = 'ComfyUI'
 
     def draw(self, context):
         layout = self.layout
-        
-        # 在受限上下文中，'scene' 可能不存在，必须先用 hasattr 检查
-        if not hasattr(context, 'scene') or not context.scene:
-            return
-            
-        props = context.scene.bridge_props # 获取数据模型
-
-        # 状态指示器
-        status_row = layout.row(align=True)
-        if props.connection_status == 'CONNECTED':
-            status_row.label(text="状态: 已连接", icon='CHECKMARK')
-        elif props.connection_status == 'FAILED':
-            status_row.label(text="状态: 连接失败", icon='ERROR')
-        else:
-            status_row.label(text="状态: 未连接", icon='QUESTION')
-        
-        status_row.operator("bridge.test_connection", text="", icon='FILE_REFRESH')
-
-        # 核心功能区 (根据连接状态决定是否可用)
-        main_box = layout.box()
-        col = main_box.column()
-        
-        is_ready = (props.connection_status == 'CONNECTED' and props.target_image_datablock is not None)
-        
-        col.label(text="目标图像:")
-        col.template_ID(props, "target_image_datablock", new="image.new", open="image.open")
-        
-        # poll() 方法会自动处理按钮的可用状态，无需手动设置 active
-        col.operator("bridge.render_and_send", text="渲染并发送到 ComfyUI", icon='RENDER_STILL')
-        
-        if not is_ready:
-            warning_col = col.column(align=True)
-            warning_col.scale_y = 0.8
-            if props.connection_status != 'CONNECTED':
-                warning_col.label(text="请先成功测试连接", icon='INFO')
-            if props.target_image_datablock is None:
-                warning_col.label(text="请选择或创建一个目标图像", icon='INFO')
-
-
-class BRIDGE_PT_ConnectionSettingsPanel(bpy.types.Panel):
-    bl_label = "连接设置"
-    bl_idname = "BRIDGE_PT_ConnectionSettingsPanel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'ComfyBridge'
-    bl_parent_id = 'BRIDGE_PT_MainPanel' # 作为主面板的子面板
-    bl_options = {'DEFAULT_CLOSED'} # 默认折叠
-
-    def draw(self, context):
-        layout = self.layout
-        
-        # 在受限上下文中，'scene' 可能不存在，必须先用 hasattr 检查
-        if not hasattr(context, 'scene') or not context.scene:
-            return
-            
         props = context.scene.bridge_props
 
-        col = layout.column()
-        col.prop(props, "comfyui_address")
-        col.prop(props, "blender_receiver_port")
+        # --- 连接状态 ---
+        box = layout.box()
+        row = box.row(align=True)
+        row.label(text="连接状态:")
         
-        layout.separator()
+        status = props.connection_status
+        if status == 'DISCONNECTED': row.label(text="未连接", icon='RADIOBUT_OFF')
+        elif status == 'CONNECTED': row.label(text="已连接", icon='RADIOBUT_ON')
+        elif status == 'FAILED': row.label(text="连接失败", icon='ERROR')
         
-        remote_box = layout.box()
-        remote_box.label(text="远程工作流", icon='URL')
-        remote_box.prop(props, "public_address_override")
-        remote_box.label(text="需要公网IP和端口转发", icon='INFO')
+        box.operator("bridge.test_connection", text="测试连接", icon='FILE_REFRESH')
+
+        # --- 发送逻辑 ---
+        box = layout.box()
+        box.label(text="数据发送", icon='EXPORT')
+        box.prop(props, "source_mode", expand=True)
+
+        is_ready_for_send = props.connection_status == 'CONNECTED' and props.target_image_datablock is not None
+
+        if props.source_mode == 'RENDER':
+            col = box.column(align=True)
+            col.enabled = is_ready_for_send
+            col.prop(props, "render_mode")
+            col.operator("bridge.send_data", text="渲染并发送", icon='RENDER_STILL')
+        
+        elif props.source_mode == 'IMAGE_EDITOR':
+            col = box.column(align=True)
+            col.enabled = is_ready_for_send
+            
+            active_image = get_active_image_from_editor(context)
+            if active_image:
+                col.template_preview(active_image, show_buttons=False)
+                col.label(text=f"当前: {active_image.name}")
+            else:
+                col.label(text="请在图像编辑器中选择图像", icon='INFO')
+            
+            op = col.operator("bridge.send_data", text="发送当前图像", icon='IMAGE_DATA')
+            if not active_image:
+                op.enabled = False
+
+        # --- 接收设置 ---
+        box = layout.box()
+        box.label(text="结果接收", icon='IMPORT')
+        box.prop(props, "target_image_datablock")
+        
+        # --- 提示信息 ---
+        if not is_ready_for_send:
+            warning_box = layout.box()
+            warning_box.label(text="请先完成设置:", icon='ERROR')
+            if props.connection_status != 'CONNECTED':
+                warning_box.label(text="- 点击 '测试连接' 直至成功", icon='RIGHTARROW')
+            if props.target_image_datablock is None:
+                warning_box.label(text="- 在下方选择一个 '目标图像'", icon='RIGHTARROW')
+
+        # --- 连接设置 (可折叠) ---
+        settings_box = layout.box()
+        row = settings_box.row()
+        row.prop(props, "show_connection_settings",
+                 icon="TRIA_DOWN" if props.show_connection_settings else "TRIA_RIGHT",
+                 icon_only=True, emboss=False)
+        row.label(text="连接设置")
+
+        if props.show_connection_settings:
+            settings_box.prop(props, "comfyui_address")
+            settings_box.prop(props, "blender_receiver_port")
+            settings_box.prop(props, "public_address_override")
+
+# --- 注册 ---
+panel_classes = (
+    BRIDGE_PT_MainPanel,
+)
+
+def register():
+    # 确保辅助函数在 panel 模块中可用
+    bpy.types.Scene.get_active_image_from_editor = get_active_image_from_editor
+    for cls in panel_classes:
+        bpy.utils.register_class(cls)
+
+def unregister():
+    for cls in reversed(panel_classes):
+        bpy.utils.unregister_class(cls)
+    del bpy.types.Scene.get_active_image_from_editor
