@@ -6,7 +6,7 @@ import threading
 from . import properties
 from . import panel
 from . import operators
-from .utils import state, receiver, tasks
+from .utils import state, receiver, tasks, tunnel, dependencies
 
 # --- 日志配置 ---
 log = logging.getLogger("bl_ext.user_default.blender_comfyui_bridge")
@@ -42,18 +42,29 @@ def register():
     """插件注册函数"""
     log.info("Registering Blender-ComfyUI-Bridge addon...")
     
+    # 步骤 1: 确保所有Python依赖都已安装
+    dependencies.ensure_dependencies()
+    
+    # 步骤 2: 抑制来自依赖项的已知弃用警告
+    try:
+        import warnings
+        # paramiko 内部使用了 cryptography 的一个旧功能，会导致弃用警告
+        # 我们在这里抑制它，以保持控制台清洁
+        from cryptography.utils import CryptographyDeprecationWarning
+        warnings.filterwarnings("ignore", category=CryptographyDeprecationWarning)
+        log.info("已抑制来自 paramiko/cryptography 的已知弃用警告。")
+    except ImportError:
+        # 如果 cryptography 不可用或有其他问题，只需记录下来即可
+        log.warning("无法导入 cryptography.utils 来抑制警告。")
+    except Exception as e:
+        log.warning(f"抑制警告时发生未知错误: {e}")
+
     panel.register()
 
     for cls in classes:
         bpy.utils.register_class(cls)
     
     bpy.types.Scene.bridge_props = bpy.props.PointerProperty(type=properties.BridgeProperties)
-
-    # 启动后台接收服务器
-    # 我们无法在注册时访问 context.scene.bridge_props。
-    # 在类被注册后，我们可以通过 RNA 系统安全地获取属性的默认值。
-    default_port = properties.BridgeProperties.bl_rna.properties['blender_receiver_port'].default
-    state.start_receiver_server(default_port)
 
     # 使用 bpy.app.timers 注册我们的后台任务
     if not bpy.app.timers.is_registered(tasks.process_task_queue):
@@ -66,6 +77,10 @@ def register():
 def unregister():
     """插件卸载函数"""
     log.info("Unregistering Blender-ComfyUI-Bridge addon...")
+
+    # --- 首先停止所有网络活动 ---
+    tunnel.stop_tunnel()
+    state.stop_receiver_server()
     
     panel.unregister()
 
@@ -74,9 +89,6 @@ def unregister():
         bpy.app.timers.unregister(tasks.process_task_queue)
         log.info("Task queue processor unregistered.")
 
-    # 停止后台服务
-    state.stop_receiver_server()
-    
     if hasattr(bpy.types.Scene, 'bridge_props'):
         del bpy.types.Scene.bridge_props
 

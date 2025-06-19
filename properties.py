@@ -34,6 +34,51 @@ class BridgeProperties(bpy.types.PropertyGroup):
         default="",
     )
 
+    # --- 新增: SSH 隧道设置 ---
+    show_ssh_settings: bpy.props.BoolProperty(
+        name="显示SSH设置",
+        description="展开或折叠SSH隧道设置",
+        default=False
+    )
+
+    use_ssh: bpy.props.BoolProperty(
+        name="使用SSH隧道",
+        description="通过SSH隧道安全地连接到远程ComfyUI服务器",
+        default=False
+    )
+
+    ssh_host: bpy.props.StringProperty(
+        name="SSH 主机",
+        description="SSH服务器的地址或主机名",
+        default=""
+    )
+
+    ssh_port: bpy.props.StringProperty(
+        name="SSH 端口",
+        description="SSH服务的端口号 (例如: 22)",
+        default="",
+    )
+
+    ssh_user: bpy.props.StringProperty(
+        name="SSH 用户名",
+        description="登录SSH服务器的用户名",
+        default="root"
+    )
+
+    ssh_password: bpy.props.StringProperty(
+        name="SSH 密码/私钥密码",
+        description="SSH密码或私钥的密码。如果使用私钥且私钥无密码，可留空",
+        default="",
+        subtype='PASSWORD'
+    )
+
+    ssh_key_path: bpy.props.StringProperty(
+        name="SSH 私钥文件路径",
+        description="（可选）使用私钥文件进行认证。如果提供，将优先于密码认证",
+        default="",
+        subtype='FILE_PATH'
+    )
+
     # --- 状态管理 ---
     connection_status: bpy.props.EnumProperty(
         name="连接状态",

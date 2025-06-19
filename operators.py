@@ -2,13 +2,98 @@ import bpy
 import logging
 import tempfile
 import os
+import time
 
-from .utils import comms
-from .panel import get_active_image_from_editor # 确保从 panel 导入
+from .utils import comms, tunnel, state
+from .panel import get_active_image_from_editor
 
 log = logging.getLogger(__name__)
 
+def _ensure_ssh_tunnel(props):
+    """
+    检查是否需要SSH隧道，并确保它正在运行。
+    返回一个元组 (success, error_message)。
+    """
+    if not props.use_ssh:
+        return True, None
+
+    if not props.ssh_port:
+        return False, "Please specify a valid port in SSH settings."
+
+    try:
+        port = int(props.ssh_port)
+        if not (1 <= port <= 65535):
+            raise ValueError
+    except ValueError:
+        return False, f"Invalid SSH port: '{props.ssh_port}'. Please enter a number between 1-65535."
+
+    manager = tunnel.get_tunnel_manager(props)
+    if not manager:
+        msg = "Cannot create SSH tunnel manager."
+        log.error(msg)
+        return False, msg
+        
+    status, error_msg = tunnel.get_tunnel_status()
+
+    if status == "ACTIVE":
+        return True, None
+    
+    if status == "ERROR":
+        log.error(f"SSH隧道处于错误状态: {error_msg}")
+        tunnel.stop_tunnel()
+        manager = tunnel.get_tunnel_manager(props)
+
+    log.info("正在启动SSH隧道...")
+    manager.start()
+    
+    for _ in range(100):
+        time.sleep(0.1)
+        status, error_msg = tunnel.get_tunnel_status()
+        if status == "ACTIVE":
+            log.info("SSH隧道成功启动。")
+            return True, None
+        if status == "ERROR":
+            msg = f"SSH tunnel start failed: {error_msg}"
+            log.error(msg)
+            return False, msg
+            
+    msg = "SSH tunnel start timeout."
+    log.error(msg)
+    return False, msg
+
+def _get_comfyui_address(props):
+    """根据是否使用SSH隧道，获取正确的ComfyUI ZMQ地址。"""
+    if props.use_ssh:
+        # 如果使用隧道，ZMQ客户端总是连接到本地转发的端口
+        try:
+            _, remote_port_str = props.comfyui_address.split(':')
+            return f"127.0.0.1:{remote_port_str}"
+        except ValueError:
+            # 如果comfyui_address格式不正确，返回一个明显错误的值
+            return "0.0.0.0:0"
+    else:
+        return props.comfyui_address
+        
+def _get_blender_callback_address(props):
+    """
+    根据是否使用SSH隧道和用户设置，获取正确的Blender回调HTTP地址。
+    这个地址是发送给ComfyUI的，告诉它处理完后应该把图片发到哪里。
+    """
+    if props.use_ssh:
+        # 如果使用隧道，ComfyUI需要连接到远程服务器上由SSH创建的监听端口
+        # 这个端口会将流量转发回本地Blender
+        return f"http://127.0.0.1:{props.blender_receiver_port}"
+
+    if props.public_address_override:
+        return f"http://{props.public_address_override}:{props.blender_receiver_port}"
+    
+    # 默认情况，ComfyUI和Blender在同一网络
+    # 注意：这里我们假设ComfyUI可以访问到Blender的'localhost'或'127.0.0.1'
+    # 如果在docker等复杂网络中，用户需要使用 public_address_override
+    return f"http://127.0.0.1:{props.blender_receiver_port}"
+
 class BRIDGE_OT_TestConnection(bpy.types.Operator):
+    """向ComfyUI发送一个'ping'来测试连接状态"""
     bl_idname = "bridge.test_connection"
     bl_label = "测试连接"
     bl_description = "向 ComfyUI 发送一个'ping'来测试连接状态"
@@ -16,26 +101,41 @@ class BRIDGE_OT_TestConnection(bpy.types.Operator):
     def execute(self, context):
         props = context.scene.bridge_props
         
-        # 显示"正在连接..."状态
-        props.connection_status = 'DISCONNECTED' # 先重置一下，这样用户能看到变化
+        success, msg = _ensure_ssh_tunnel(props)
+        if not success:
+            self.report({'OPERATOR'}, f"[ERROR] {msg}")
+            log.error(msg)
+            props.connection_status = 'FAILED'
+            return {'FINISHED'}
+
+        target_address = _get_comfyui_address(props)
+        log.info(f"正在尝试连接到: {target_address}")
+
+        props.connection_status = 'DISCONNECTED'
         bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
 
         try:
-            success = comms.send_ping(props.comfyui_address)
+            success = comms.send_ping(target_address)
             if success:
                 props.connection_status = 'CONNECTED'
-                self.report({'INFO'}, "与 ComfyUI 连接成功！")
+                msg = "Successfully connected to ComfyUI!"
+                self.report({'OPERATOR'}, f"[INFO] {msg}")
+                log.info("与 ComfyUI 连接成功！")
             else:
                 props.connection_status = 'FAILED'
-                self.report({'ERROR'}, "连接失败。请检查地址或确保ComfyUI服务器正在运行。")
+                msg = "Connection failed. Please check the address or ensure ComfyUI is running."
+                self.report({'OPERATOR'}, f"[ERROR] {msg}")
+                log.error("连接失败。请检查地址或确保ComfyUI服务器正在运行。")
         except Exception as e:
             props.connection_status = 'FAILED'
-            self.report({'ERROR'}, f"发生未知错误: {e}")
-            log.error(f"测试连接时发生错误: {e}", exc_info=True)
+            msg = f"An unknown error occurred: {e}"
+            self.report({'OPERATOR'}, f"[ERROR] {msg}")
+            log.error(f"发生未知错误: {e}", exc_info=True)
             
         return {'FINISHED'}
 
 class BRIDGE_OT_SendData(bpy.types.Operator):
+    """根据所选模式，发送数据到ComfyUI"""
     bl_idname = "bridge.send_data"
     bl_label = "发送数据到 ComfyUI"
     bl_description = "根据所选模式，发送数据到 ComfyUI"
@@ -55,16 +155,10 @@ class BRIDGE_OT_SendData(bpy.types.Operator):
         return True
 
     def _build_channel_map(self, view_layer):
-        """
-        根据EXR文件内容的直接证据，构建从ComfyUI期望名到EXR实际通道名的映射。
-        这是最终的、基于证据的实现。
-        """
+        """根据当前视图层的设置，构建通道映射表。"""
         channel_map = {}
-        
-        # 关键：从活动的视图层动态获取名称作为前缀
         prefix = view_layer.name
 
-        # 这个映射表基于对EXR文件的分析进行了最终修正
         PASS_MAP = {
             'use_pass_combined': ('combined', 'Combined'),
             'use_pass_z': ('depth', 'Depth'),
@@ -80,19 +174,16 @@ class BRIDGE_OT_SendData(bpy.types.Operator):
             'use_pass_glossy_direct': ('glossy_direct', 'GlossDir'),
             'use_pass_glossy_color': ('glossy_color', 'GlossCol'),
             'use_pass_transmission_direct': ('transmission_direct', 'TransDir'),
-            'use_pass_transmission_color': ('transmission_color', 'Transp'), # 修正: 根据文件分析，应为 Transp
+            'use_pass_transmission_color': ('transmission_color', 'Transp'),
             'use_pass_position': ('position', 'Position'),
-            'use_pass_volume_direct': ('volume_direct', 'VolumeDir'),       # 修正: 根据文件分析，应为 VolumeDir
+            'use_pass_volume_direct': ('volume_direct', 'VolumeDir'),
         }
 
-        # 遍历所有已知的标准渲染通道
         for prop_name, (comfy_name, exr_base_name) in PASS_MAP.items():
             if getattr(view_layer, prop_name, False):
-                # 构建完整的EXR通道基础名称 (例如 "ViewLayer.AO")
                 full_exr_name = f"{prefix}.{exr_base_name}"
                 channel_map[comfy_name] = full_exr_name
 
-        # 单独处理自定义AOV (它们同样会获得前缀)
         for aov in view_layer.aovs:
             if aov.is_active:
                 comfy_name = aov.name.lower().replace(' ', '_')
@@ -104,13 +195,11 @@ class BRIDGE_OT_SendData(bpy.types.Operator):
 
     def execute(self, context):
         props = context.scene.bridge_props
-        
-        # 根据模式执行不同逻辑
+        state.start_receiver_server(props.blender_receiver_port)
         if props.source_mode == 'RENDER':
             return self.execute_render(context)
         elif props.source_mode == 'IMAGE_EDITOR':
             return self.execute_send_image(context)
-            
         return {'CANCELLED'}
 
     def execute_render(self, context):
@@ -118,7 +207,6 @@ class BRIDGE_OT_SendData(bpy.types.Operator):
         scene = context.scene
         render_settings = scene.render
         
-        # 保存用户原始设置
         original_filepath = render_settings.filepath
         original_format = render_settings.image_settings.file_format
         original_color_depth = render_settings.image_settings.color_depth
@@ -134,7 +222,6 @@ class BRIDGE_OT_SendData(bpy.types.Operator):
                 extension = ".exr"
                 metadata["render_type"] = "multilayer_exr"
                 
-                # --- 构建并添加最终的通道映射表 ---
                 active_view_layer = context.view_layer
                 channel_map = self._build_channel_map(active_view_layer)
                 if channel_map:
@@ -142,9 +229,7 @@ class BRIDGE_OT_SendData(bpy.types.Operator):
 
             else: # STANDARD
                 file_format = render_settings.image_settings.file_format
-                extension = ".png" # 默认
-                if file_format == 'PNG': extension = ".png"
-                elif file_format == 'JPEG': extension = ".jpg"
+                extension = ".jpg" if file_format == 'JPEG' else ".png"
                 metadata["render_type"] = "standard"
 
             render_filename = f"{render_filename_base}{extension}"
@@ -156,11 +241,11 @@ class BRIDGE_OT_SendData(bpy.types.Operator):
             log.info("渲染完成。")
 
         except Exception as e:
-            self.report({'ERROR'}, f"渲染失败: {e}")
+            msg = f"Render failed: {e}"
+            self.report({'OPERATOR'}, f"[ERROR] {msg}")
             log.error(f"渲染操作失败: {e}", exc_info=True)
             return {'CANCELLED'}
         finally:
-            # 恢复用户设置
             render_settings.filepath = original_filepath
             render_settings.image_settings.file_format = original_format
             render_settings.image_settings.color_depth = original_color_depth
@@ -171,64 +256,58 @@ class BRIDGE_OT_SendData(bpy.types.Operator):
     def execute_send_image(self, context):
         image = get_active_image_from_editor(context)
         if not image:
-            self.report({'ERROR'}, "在图像编辑器中没有找到活动的图像。")
+            msg = "No active image found in the Image Editor."
+            self.report({'OPERATOR'}, f"[ERROR] {msg}")
+            log.error("在图像编辑器中没有找到活动的图像。")
             return {'CANCELLED'}
 
         temp_dir = tempfile.gettempdir()
         image_path = ""
         
-        # 如果图像有源文件路径，直接使用
         if image.source == 'FILE' and image.filepath:
-            # os.path.abspath is needed for relative paths
             image_path = os.path.abspath(bpy.path.abspath(image.filepath))
-            log.info(f"直接使用图像源文件: {image_path}")
-        # 如果是打包或生成的图像，则保存到临时文件
         else:
             try:
-                # Blender 无法直接保存为 jpg，所以我们统一存为 png
                 filename = f"blender_image_{image.name.replace(' ', '_')}_{os.getpid()}.png"
                 temp_path = os.path.join(temp_dir, filename)
                 
-                # 保存前需要确保图像不是脏的（比如有未应用的 viewer node 更改）
                 if image.is_dirty:
                     image.update()
 
-                # 使用 save_render 将图像（可能是 viewer node 的结果）保存
                 image.save_render(filepath=temp_path, scene=context.scene)
                 image_path = temp_path
                 log.info(f"图像 '{image.name}' 已临时保存到: {image_path}")
             except Exception as e:
-                self.report({'ERROR'}, f"保存图像失败: {e}")
+                msg = f"Failed to save image: {e}"
+                self.report({'OPERATOR'}, f"[ERROR] {msg}")
                 log.error(f"保存图像 '{image.name}' 失败: {e}", exc_info=True)
                 return {'CANCELLED'}
         
-        metadata = {"render_type": "direct_image"}
-        return self.send_to_comfyui(context, image_path, metadata)
-
+        return self.send_to_comfyui(context, image_path, {"render_type": "direct_image"})
 
     def send_to_comfyui(self, context, file_path, user_metadata={}):
         props = context.scene.bridge_props
         image_data = None
         
-        # 1. 读取文件内容到内存
+        success, msg = _ensure_ssh_tunnel(props)
+        if not success:
+            self.report({'OPERATOR'}, f"[ERROR] {msg}")
+            log.error(msg)
+            return {'CANCELLED'}
+
         try:
             with open(file_path, 'rb') as f:
                 image_data = f.read()
-            log.info(f"成功读取文件 '{os.path.basename(file_path)}' ({len(image_data)} bytes).")
         except Exception as e:
-            self.report({'ERROR'}, f"读取文件失败: {file_path}. 原因: {e}")
+            msg = f"Failed to read file: {file_path}. Reason: {e}"
+            self.report({'OPERATOR'}, f"[ERROR] {msg}")
             log.error(f"读取文件 '{file_path}' 失败: {e}", exc_info=True)
             return {'CANCELLED'}
 
-        # 2. 构建元数据
-        if props.public_address_override:
-            blender_server_address = f"http://{props.public_address_override}:{props.blender_receiver_port}"
-        else:
-            blender_server_address = f"http://127.0.0.1:{props.blender_receiver_port}"
-
+        blender_server_address = _get_blender_callback_address(props)
         metadata = {
             "type": "render_and_return",
-            "filename": os.path.basename(file_path), # 发送文件名而不是完整路径
+            "filename": os.path.basename(file_path),
             "return_info": {
                 "blender_server_address": blender_server_address,
                 "image_datablock_name": props.target_image_datablock.name
@@ -236,22 +315,24 @@ class BRIDGE_OT_SendData(bpy.types.Operator):
         }
         metadata.update(user_metadata)
         
-        # 3. 发送数据
+        target_address = _get_comfyui_address(props)
+        log.info(f"准备发送数据到: {target_address}")
         log.debug(f"构建的元数据: {metadata}")
-        success = comms.send_data(props.comfyui_address, metadata, image_data)
+        success = comms.send_data(target_address, metadata, image_data)
         if success:
-            self.report({'INFO'}, "数据已成功发送到 ComfyUI。")
+            msg = "Data sent to ComfyUI successfully."
+            self.report({'OPERATOR'}, f"[INFO] {msg}")
+            log.info("数据已成功发送到 ComfyUI。")
         else:
-            self.report({'ERROR'}, "数据发送失败！请检查控制台日志。")
-            # 注意：即使发送失败，临时文件也应该被清理
+            msg = "Failed to send data! Please check the console log."
+            self.report({'OPERATOR'}, f"[ERROR] {msg}")
+            log.error("数据发送失败！请检查控制台日志。")
         
-        # 4. 清理临时文件
-        # 我们只清理在 temp 目录中由插件自己创建的文件
         if tempfile.gettempdir() in os.path.abspath(file_path):
             try:
                 os.remove(file_path)
                 log.info(f"已删除临时文件: {file_path}")
-            except Exception as e:
-                log.warning(f"删除临时文件失败 '{file_path}': {e}")
+            except OSError as e:
+                log.warning(f"删除临时文件失败: {file_path}. 原因: {e}")
 
         return {'FINISHED'}

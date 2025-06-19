@@ -1,6 +1,5 @@
 import queue
 import logging
-# from . import receiver # <-- 移除此处的全局导入以打破循环
 
 log = logging.getLogger(__name__)
 

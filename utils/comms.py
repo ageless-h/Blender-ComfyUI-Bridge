@@ -1,13 +1,22 @@
-import zmq
-import msgspec
 import logging
 
 # 获取一个日志记录器
 log = logging.getLogger(__name__)
 
-# 创建一个可重用的全局ZMQ上下文
-# ZMQ上下文是线程安全的
-context = zmq.Context()
+# 全局 ZMQ 上下文的占位符
+_zmq_context = None
+
+def get_zmq_context():
+    """
+    获取 ZMQ 上下文的单例。
+    只在第一次调用时创建。
+    """
+    global _zmq_context
+    if _zmq_context is None:
+        import zmq
+        log.info("Creating new ZMQ context.")
+        _zmq_context = zmq.Context()
+    return _zmq_context
 
 def _prepare_address(address):
     """确保地址包含 tcp:// 协议头"""
@@ -17,6 +26,9 @@ def _prepare_address(address):
 
 def send_request(address, data, timeout=5000):
     """一个通用函数，用于向ZMQ地址发送请求并等待回复。"""
+    import zmq
+    import msgspec
+
     address = _prepare_address(address)
     encoder = msgspec.msgpack.Encoder()
     decoder = msgspec.msgpack.Decoder()
@@ -25,6 +37,7 @@ def send_request(address, data, timeout=5000):
     
     socket = None  # 确保 socket 变量在 try 块外可用
     try:
+        context = get_zmq_context()
         # 1. 创建 ZMQ REQ socket
         socket = context.socket(zmq.REQ)
         socket.setsockopt(zmq.LINGER, 0)
@@ -60,10 +73,14 @@ def send_request(address, data, timeout=5000):
 
 def send_ping(address, timeout=2000):
     """向服务器发送一个简单的 ping，只检查是否收到回复，不关心内容。"""
+    import zmq
+    import msgspec
+
     address = _prepare_address(address)
     log.info(f"Pinging {address}...")
     socket = None
     try:
+        context = get_zmq_context()
         socket = context.socket(zmq.REQ)
         socket.setsockopt(zmq.LINGER, 0)
         socket.setsockopt(zmq.RCVTIMEO, timeout)
@@ -97,6 +114,9 @@ def send_data(address, metadata, image_data=None, timeout=10000):
     :param timeout: 超时时间 (毫秒)
     :return: 成功时返回 True，否则返回 False
     """
+    import zmq
+    import msgspec
+
     address = _prepare_address(address)
     log.info(f"Sending data to {address}: {metadata}")
     
@@ -107,6 +127,7 @@ def send_data(address, metadata, image_data=None, timeout=10000):
     
     socket = None
     try:
+        context = get_zmq_context()
         socket = context.socket(zmq.REQ)
         socket.setsockopt(zmq.LINGER, 0)
         socket.setsockopt(zmq.RCVTIMEO, timeout)

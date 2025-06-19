@@ -26,9 +26,17 @@ def process_task_queue():
             image.reload()
             
             log.info(f"图像 '{image_name}' 已成功更新。")
-            # bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1) # 可选：强制UI更新
 
         except Exception as e:
             log.error(f"处理任务队列时出错: {e}", exc_info=True)
     
     return 0.5 # 返回再次运行的间隔时间（秒） 
+
+def unregister_task_queue():
+    """清理任务队列，以防插件卸载时有残留任务。"""
+    while not state.task_queue.empty():
+        try:
+            state.task_queue.get_nowait()
+        except state.task_queue.Empty:
+            break
+    log.info("任务队列已清空。") 

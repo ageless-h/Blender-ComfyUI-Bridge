@@ -86,6 +86,30 @@ class BRIDGE_PT_MainPanel(bpy.types.Panel):
             settings_box.prop(props, "blender_receiver_port")
             settings_box.prop(props, "public_address_override")
 
+        # --- SSH 设置 (可折叠) ---
+        ssh_box = layout.box()
+        row = ssh_box.row()
+        row.prop(props, "show_ssh_settings",
+                 icon="TRIA_DOWN" if props.show_ssh_settings else "TRIA_RIGHT",
+                 icon_only=True, emboss=False)
+        row.label(text="SSH 隧道设置")
+
+        if props.show_ssh_settings:
+            ssh_box.prop(props, "use_ssh")
+            
+            # 仅在使用SSH时才显示详细信息
+            if props.use_ssh:
+                col = ssh_box.column()
+                col.enabled = True # 确保内部控件是可编辑的
+                col.prop(props, "ssh_host")
+                col.prop(props, "ssh_port")
+                col.prop(props, "ssh_user")
+                col.prop(props, "ssh_password")
+                col.prop(props, "ssh_key_path")
+                col.label(text="注意: 插件会自动处理端口转发。", icon='INFO')
+                col.label(text="ComfyUI地址应设为远程服务器的地址(如127.0.0.1:5555)。", icon='INFO')
+                col.label(text="Blender接收端口将自动在远程服务器上映射。", icon='INFO')
+
 # --- 注册 ---
 panel_classes = (
     BRIDGE_PT_MainPanel,
@@ -100,4 +124,5 @@ def register():
 def unregister():
     for cls in reversed(panel_classes):
         bpy.utils.unregister_class(cls)
-    del bpy.types.Scene.get_active_image_from_editor
+    if hasattr(bpy.types.Scene, 'get_active_image_from_editor'):
+        del bpy.types.Scene.get_active_image_from_editor
