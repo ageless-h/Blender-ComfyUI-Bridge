@@ -285,7 +285,7 @@ class BRIDGE_OT_SendData(bpy.types.Operator):
         
         return self.send_to_comfyui(context, image_path, {"render_type": "direct_image"})
 
-    def send_to_comfyui(self, context, file_path, user_metadata={}):
+    def send_to_comfyui(self, context, file_path, user_metadata=None):
         props = context.scene.bridge_props
         image_data = None
         
@@ -313,7 +313,8 @@ class BRIDGE_OT_SendData(bpy.types.Operator):
                 "image_datablock_name": props.target_image_datablock.name
             }
         }
-        metadata.update(user_metadata)
+        if user_metadata is not None:
+            metadata.update(user_metadata)
         
         target_address = _get_comfyui_address(props)
         log.info(f"准备发送数据到: {target_address}")

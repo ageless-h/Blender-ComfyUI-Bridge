@@ -1,5 +1,8 @@
 import threading
 import time
+import logging
+
+log = logging.getLogger(__name__)
 
 # --- 全局状态变量 ---
 # 使用一个字典来存储全局的隧道管理器实例，确保单例模式
@@ -32,7 +35,7 @@ class SSHTunnelManager:
             self.ssh_port = int(ssh_settings.ssh_port)
         except (ValueError, TypeError):
             self.error = f"内部错误：SSH端口 '{ssh_settings.ssh_port}' 不是一个有效的数字。"
-            print(f"[SSH] Error: {self.error}")
+            log.error(f"[SSH] Error: {self.error}")
             return
 
         self.ssh_user = ssh_settings.ssh_user
@@ -47,7 +50,7 @@ class SSHTunnelManager:
             self.local_http_port = ssh_settings.blender_receiver_port
         except ValueError as e:
             self.error = f"无法解析地址和端口: {e}"
-            print(f"[SSH] Error: {self.error}")
+            log.error(f"[SSH] Error: {self.error}")
             return
 
         # Lazy import sshtunnel
@@ -82,30 +85,30 @@ class SSHTunnelManager:
         """
         from sshtunnel import BaseSSHTunnelForwarderError
         try:
-            print(f"[SSH] {name} 转发器线程启动...")
+            log.info(f"[SSH] {name} 转发器线程启动...")
             forwarder.start()
             # This loop is the new crucial part. It keeps the thread alive.
             while self.is_running:
                 time.sleep(0.5)
         except BaseSSHTunnelForwarderError as e:
             self.error = f"SSH 隧道错误 ({name}): {e}"
-            print(f"[SSH] Error in {name} forwarder: {self.error}")
+            log.error(f"[SSH] Error in {name} forwarder: {self.error}")
             self.is_running = False # Signal other threads to stop
         except Exception as e:
             self.error = f"未知错误在 {name} 转发器: {e}"
-            print(f"[SSH] Error: {self.error}")
+            log.error(f"[SSH] Error: {self.error}")
             self.is_running = False
         finally:
             if forwarder.is_active:
                 forwarder.stop()
-            print(f"[SSH] {name} 转发器线程已停止。")
+            log.info(f"[SSH] {name} 转发器线程已停止。")
 
     def start(self):
         """启动两个隧道转发器，每个都在自己的线程中。"""
         if self.is_running or self.error:
             return
             
-        print("[SSH] 正在启动双向隧道...")
+        log.info("[SSH] 正在启动双向隧道...")
         self.is_running = True # Set state to running before starting threads
 
         self.thread_local = threading.Thread(target=self._run_forwarder, args=(self.local_forwarder, "Local->Remote"), daemon=True)
@@ -119,7 +122,7 @@ class SSHTunnelManager:
         if not self.is_running:
             return
         
-        print("[SSH] 正在停止双向隧道...")
+        log.info("[SSH] 正在停止双向隧道...")
         
         self.is_running = False # This will signal the _run_forwarder loops to exit.
         
@@ -128,7 +131,7 @@ class SSHTunnelManager:
         if self.thread_remote and self.thread_remote.is_alive():
             self.thread_remote.join(timeout=2)
         
-        print("[SSH] 隧道已停止。")
+        log.info("[SSH] 隧道已停止。")
 
 def get_tunnel_manager(ssh_settings=None):
     """
@@ -136,10 +139,10 @@ def get_tunnel_manager(ssh_settings=None):
     如果实例不存在，则使用提供的设置创建一个新实例。
     """
     global _tunnel_manager_instance
-    with _tunnel_lock:
-        if _tunnel_manager_instance is None and ssh_settings:
-            print("[SSH] 创建新的隧道管理器实例。")
-            _tunnel_manager_instance = SSHTunnelManager(ssh_settings)
+        with _tunnel_lock:
+            if _tunnel_manager_instance is None and ssh_settings:
+                log.info("[SSH] 创建新的隧道管理器实例。")
+                _tunnel_manager_instance = SSHTunnelManager(ssh_settings)
         return _tunnel_manager_instance
 
 def stop_tunnel():
@@ -147,7 +150,7 @@ def stop_tunnel():
     global _tunnel_manager_instance
     with _tunnel_lock:
         if _tunnel_manager_instance:
-            print("[SSH] 正在通过全局函数停止隧道。")
+            log.info("[SSH] 正在通过全局函数停止隧道。")
             _tunnel_manager_instance.stop()
             _tunnel_manager_instance = None
 
