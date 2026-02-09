@@ -27,13 +27,13 @@ classes = (
 
 bl_info = {
     "name": "Blender-ComfyUI-Bridge",
-    "author": "Your Name",
+    "author": "ageless-h",
     "version": (0, 1, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > ComfyUI",
     "description": "Bridges Blender and ComfyUI for rendering workflows",
     "warning": "",
-    "doc_url": "",
+    "doc_url": "https://github.com/ageless-h/Blender-ComfyUI-Bridge",
     "category": "Render",
     "id": "blender_comfyui_bridge",
 }

@@ -12,18 +12,18 @@ id = "blender_comfyui_bridge"
 version = "2.1.0"
 name = "Blender-ComfyUI-Bridge"
 tagline = "Blender and ComfyUI integration through ZMQ, HTTP and SSH"
-maintainer = "Your Name"
+maintainer = "ageless-h"
 type = "add-on"
 
-authors = ["Your Name Here"]
+authors = ["ageless-h"]
 # The category in the Add-ons listing.
 category = "Render"
 # A support level for this add-on.
 support = "COMMUNITY"
 # A URL for the add-on's documentation.
-documentation_url = ""
+documentation_url = "https://github.com/ageless-h/Blender-ComfyUI-Bridge"
 # A URL for the add-on's bug tracker.
-tracker_url = ""
+tracker_url = "https://github.com/ageless-h/Blender-ComfyUI-Bridge/issues"
 # A list of other add-ons that this one depends on.
 dependencies = []
 # A list of Blender versions that this add-on supports.
