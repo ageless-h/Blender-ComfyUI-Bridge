@@ -1,5 +1,7 @@
 # Blender-ComfyUI Bridge
 
+[![GitHub Repo stars](https://img.shields.io/github/stars/ageless-h/Blender-ComfyUI-Bridge?style=social)](https://github.com/ageless-h/Blender-ComfyUI-Bridge/stargazers)
+
 一个Blender插件，作为在Blender和ComfyUI之间进行实时、双向通信的桥梁。
 
 这个插件允许您在Blender中一键将渲染结果或图像数据无缝地发送到ComfyUI中一个预设好的工作流进行处理，然后将处理后的图像自动返回到Blender中。
